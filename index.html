@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Local Voice — talk to your Mac, it types for you</title>
+<style>
+  :root{
+    --bg:#faf7f2; --card:#ffffff; --ink:#241f1b; --muted:#6b625a;
+    --line:#e7ddd0; --accent:#c9553a; --accent-ink:#8a3320;
+    --code-bg:#1e1a17; --code-ink:#f4ede3; --ok:#2f7d5b;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#17130f; --card:#221c17; --ink:#f2e9df; --muted:#a99e92;
+      --line:#342a22; --accent:#e0765b; --accent-ink:#f0b8a8;
+      --code-bg:#0d0b09; --code-ink:#f4ede3; --ok:#63c197;
+    }
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:720px; margin:0 auto; padding:clamp(1.5rem,5vw,4rem) 1.25rem 4rem}
+  .badge{display:inline-flex; align-items:center; gap:.5rem; font-size:.82rem;
+    color:var(--muted); border:1px solid var(--line); border-radius:999px;
+    padding:.3rem .8rem; background:var(--card)}
+  .dot{width:.5rem; height:.5rem; border-radius:50%; background:var(--accent)}
+  h1{font-size:clamp(2rem,6vw,2.9rem); line-height:1.1; letter-spacing:-.02em;
+    margin:1.4rem 0 .6rem; font-weight:600}
+  .lede{font-size:clamp(1.05rem,2.6vw,1.25rem); color:var(--muted); margin:0 0 2rem; max-width:38ch}
+  .step-num{display:inline-flex; align-items:center; justify-content:center;
+    width:1.7rem; height:1.7rem; border-radius:50%; background:var(--accent);
+    color:#fff; font-weight:600; font-size:.95rem; flex:none}
+  .step{display:flex; gap:.9rem; align-items:flex-start; margin:0 0 1.5rem}
+  .step h3{margin:.15rem 0 .25rem; font-size:1.08rem; font-weight:600}
+  .step p{margin:0; color:var(--muted); font-size:.98rem}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+    padding:1.4rem; margin:2.2rem 0}
+  .cmd{display:flex; align-items:center; gap:.75rem; background:var(--code-bg);
+    border-radius:12px; padding:.85rem 1rem; margin-top:.9rem; overflow-x:auto}
+  .cmd code{color:var(--code-ink); font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.9rem; white-space:nowrap}
+  .copy{flex:none; margin-left:auto; border:0; cursor:pointer; border-radius:8px;
+    background:var(--accent); color:#fff; font-weight:600; font-size:.85rem;
+    padding:.5rem .9rem; font-family:inherit; transition:transform .08s ease}
+  .copy:active{transform:scale(.96)}
+  .copy.done{background:var(--ok)}
+  .hint{font-size:.9rem; color:var(--muted); margin:.7rem 0 0}
+  .feat{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.9rem; margin:2.2rem 0}
+  .feat div{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:1rem 1.1rem}
+  .feat b{display:block; font-size:.98rem; margin-bottom:.15rem}
+  .feat span{font-size:.9rem; color:var(--muted)}
+  .kbd{font-family:ui-monospace,Menlo,monospace; background:var(--bg);
+    border:1px solid var(--line); border-radius:6px; padding:.05rem .4rem; font-size:.85em}
+  details{border-top:1px solid var(--line); padding:.9rem 0}
+  summary{cursor:pointer; font-weight:500; font-size:.98rem}
+  details p{color:var(--muted); font-size:.94rem; margin:.6rem 0 0}
+  .foot{color:var(--muted); font-size:.85rem; text-align:center; margin-top:3rem}
+  a{color:var(--accent-ink)}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <span class="badge"><span class="dot"></span> Private · on-device · free</span>
+
+  <h1>Talk to your Mac.<br>It types for you.</h1>
+  <p class="lede">Hold one key, speak, and your words appear — tidied up — anywhere you can type. Everything stays on your Mac.</p>
+
+  <div class="card">
+    <div class="step">
+      <span class="step-num">1</span>
+      <div>
+        <h3>Open Terminal</h3>
+        <p>Press <span class="kbd">⌘ Space</span>, type <b>Terminal</b>, and press Return.</p>
+      </div>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <div>
+        <h3>Paste this one line and press Return</h3>
+        <div class="cmd">
+          <code id="cmd">curl -fsSL https://aidanw0700-afk.github.io/localvoice/install | bash</code>
+          <button class="copy" id="copy" aria-label="Copy install command">Copy</button>
+        </div>
+        <p class="hint">It'll ask for your Mac password once. Then just follow along — it tells you what's happening.</p>
+      </div>
+    </div>
+    <div class="step">
+      <span class="step-num">3</span>
+      <div>
+        <h3>Flip two switches when asked</h3>
+        <p>Near the end it opens Settings and asks you to turn on Hammerspoon for Accessibility and Microphone. That's the whole setup.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="font-size:1.3rem;font-weight:600;margin:2.5rem 0 .3rem">Once it's done</h2>
+  <div class="feat">
+    <div><b>Dictate anywhere</b><span>Hold <span class="kbd">Right ⌘</span>, speak, let go. Your words drop in, cleaned up.</span></div>
+    <div><b>Rewrite on command</b><span>Select text, hold <span class="kbd">Right ⌘</span>, say “make this shorter” or “fix this”.</span></div>
+    <div><b>Instant bullet points</b><span>Select text and press <span class="kbd">⌘ Option 8</span>.</span></div>
+    <div><b>Nothing leaves your Mac</b><span>No accounts, no cloud, no subscription. It all runs locally.</span></div>
+  </div>
+
+  <h2 style="font-size:1.3rem;font-weight:600;margin:2.5rem 0 .6rem">Questions</h2>
+  <details><summary>Is this safe? Why Terminal?</summary>
+    <p>Terminal is Apple's built-in tool for running an installer. Pasting the one line is actually the safest, simplest path — it avoids the “unidentified developer” warnings you'd hit with a downloaded file. The installer only sets up free, open-source tools and asks before anything big.</p></details>
+  <details><summary>How long does it take?</summary>
+    <p>Usually 5–15 minutes, mostly downloading. It's fine to leave running — it tells you when it's finished with a checklist.</p></details>
+  <details><summary>What if Right ⌘ does nothing at first?</summary>
+    <p>Finish the two switches from step 3, then click the microphone icon in your top menu bar and choose Reload Config.</p></details>
+  <details><summary>How do I remove it?</summary>
+    <p>Quit Hammerspoon and drag it to the Trash. The voice files live in a folder called whisper.cpp and one called .local-whisper in your home folder — delete those and it's gone.</p></details>
+
+  <p class="foot">A little tool built by Aidan · runs entirely on your Mac</p>
+</main>
+<script>
+  (function(){
+    var btn=document.getElementById('copy'), cmd=document.getElementById('cmd');
+    btn.addEventListener('click',function(){
+      navigator.clipboard.writeText(cmd.textContent.trim()).then(function(){
+        btn.textContent='Copied ✓'; btn.classList.add('done');
+        setTimeout(function(){btn.textContent='Copy'; btn.classList.remove('done');},1800);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

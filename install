@@ -1,0 +1,245 @@
+#!/bin/bash
+# ==============================================================================
+#  Local Voice  —  private, on-device dictation for Mac.
+#  Hold Right Command, speak, release — clean text appears anywhere you type.
+#  Nothing leaves your Mac. No accounts, no subscriptions, free to run.
+#
+#  Install with one line in Terminal:
+#      curl -fsSL https://aidanw0700-afk.github.io/localvoice/install | bash
+# ==============================================================================
+set -uo pipefail
+
+BASE_URL="https://aidanw0700-afk.github.io/localvoice"
+
+# When run via `curl … | bash`, our stdin is the download pipe, not the keyboard.
+# Reattach it to the terminal so prompts (ours, Homebrew's, sudo's) work normally.
+if [ -r /dev/tty ]; then exec </dev/tty; fi
+
+# ── friendly output ──────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+  B=$'\033[1m'; DIM=$'\033[2m'; GRN=$'\033[32m'; YLW=$'\033[33m'
+  RED=$'\033[31m'; CYN=$'\033[36m'; RST=$'\033[0m'
+else
+  B=""; DIM=""; GRN=""; YLW=""; RED=""; CYN=""; RST=""
+fi
+say()  { printf "\n${B}${CYN}%s${RST}\n" "$*"; }
+ok()   { printf "  ${GRN}✓${RST} %s\n" "$*"; }
+warn() { printf "  ${YLW}!${RST} %s\n" "$*"; }
+die()  { printf "\n${RED}✗ %s${RST}\n\n" "$*" >&2
+         printf "Nothing was left half-broken. Fix the above and paste the same line again.\n\n" >&2; exit 1; }
+ask()  { local q="$1" def="${2:-y}" reply hint="[Y/n]"; [ "$def" = "n" ] && hint="[y/N]"
+         printf "  ${B}%s${RST} %s " "$q" "$hint"; read -r reply || reply=""
+         reply="${reply:-$def}"; [[ "$reply" =~ ^[Yy] ]]; }
+
+clear 2>/dev/null || true
+cat <<'BANNER'
+
+   ●  LOCAL VOICE
+   Talk to your Mac. It types for you. Everything stays private.
+
+BANNER
+echo "${DIM}  This sets everything up for you. It's safe to leave running — some${RST}"
+echo "${DIM}  downloads are large, so grab a coffee. It'll tell you when it's done.${RST}"
+echo "${DIM}  You'll be asked for your Mac password once (that's normal).${RST}"
+echo
+if ! ask "Ready to start?"; then echo "  No problem — run the same line whenever you're ready."; exit 0; fi
+
+# ── config ───────────────────────────────────────────────────────────────────
+WHISPER_MODEL="medium"
+REFINE_MODEL="gemma3:4b"
+WHISPER_DIR="$HOME/whisper.cpp"
+HS_DIR="$HOME/.hammerspoon"
+LW_DIR="$HOME/.local-whisper"
+STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
+
+# ── 0. this-is-a-mac check ───────────────────────────────────────────────────
+say "Checking your Mac…"
+[ "$(uname -s)" = "Darwin" ] || die "Local Voice is for Mac only."
+[ "$(id -u)" -ne 0 ] || die "Please don't use sudo — just paste the line as yourself."
+ARCH="$(uname -m)"
+[ "$ARCH" = "arm64" ] && BREW_PREFIX="/opt/homebrew" || BREW_PREFIX="/usr/local"
+ok "Looks good ($ARCH Mac)."
+
+# ── 1. Homebrew (installs the building blocks) ───────────────────────────────
+say "Setting up the app installer…"
+command -v brew >/dev/null 2>&1 || { [ -x "$BREW_PREFIX/bin/brew" ] && eval "$("$BREW_PREFIX/bin/brew" shellenv)"; }
+if ! command -v brew >/dev/null 2>&1; then
+  echo "  Installing Homebrew (the tool that fetches everything else)."
+  echo "  ${DIM}It may ask for your Mac password and to press Return — that's expected.${RST}"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    || die "Couldn't set up Homebrew. Check your internet and try again."
+  eval "$("$BREW_PREFIX/bin/brew" shellenv)"
+fi
+# make brew/ollama available in EVERY future Terminal (this was the missing piece)
+if [ -w "$HOME" ] && ! grep -qs 'brew shellenv' "$HOME/.zprofile" 2>/dev/null; then
+  printf '\neval "$(%s/bin/brew shellenv)"\n' "$BREW_PREFIX" >> "$HOME/.zprofile"
+fi
+command -v brew >/dev/null 2>&1 || die "Homebrew still isn't ready. Quit Terminal, reopen it, and paste the line again."
+ok "Installer ready."
+
+# a fresh Mac may not have git yet
+command -v git >/dev/null 2>&1 || { echo "  Adding git…"; brew install git >/dev/null || die "Couldn't install git."; }
+
+brew_need() { # <pkg> <friendly> [--cask]
+  local pkg="$1" name="$2" cask="${3:-}"
+  if [ "$cask" = "--cask" ]; then
+    brew list --cask "$pkg" >/dev/null 2>&1 && { ok "$name — already installed"; return; }
+    echo "  Installing $name…"; brew install --cask "$pkg" >/dev/null || die "Couldn't install $name."
+  else
+    brew list "$pkg" >/dev/null 2>&1 && { ok "$name — already installed"; return; }
+    echo "  Installing $name…"; brew install "$pkg" >/dev/null || die "Couldn't install $name."
+  fi
+  ok "$name — installed"
+}
+
+# ── 2. core pieces ───────────────────────────────────────────────────────────
+say "Installing the core pieces…"
+brew_need ffmpeg "audio recorder"
+brew_need cmake  "build tools"
+brew_need hammerspoon "Hammerspoon (the app that listens for Right ⌘)" --cask
+
+# ── 3. the local AI (for cleanup, rewrites, bullet points) ───────────────────
+say "Installing the on-device AI…"
+brew_need ollama "Ollama (local AI engine)"
+brew services start ollama >/dev/null 2>&1 || (ollama serve >/dev/null 2>&1 &)
+printf "  waiting for it to wake up"
+for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:11434/api/tags 2>/dev/null && break; printf "."; sleep 1; done
+echo
+have_model() { curl -s http://localhost:11434/api/tags 2>/dev/null | grep -q "\"$REFINE_MODEL\""; }
+if curl -s -o /dev/null http://localhost:11434/api/tags 2>/dev/null; then
+  ok "AI engine running."
+  if have_model; then
+    ok "AI model already downloaded."
+  else
+    echo "  Downloading the AI model (~3 GB, one time)…"
+    tries=0
+    until have_model; do
+      tries=$((tries+1)); [ $tries -gt 3 ] && break
+      ollama pull "$REFINE_MODEL" || true
+    done
+    if have_model; then ok "AI model ready."
+    else warn "AI model didn't finish downloading. Dictation still works; run this later to fix the AI parts:"
+         warn "   ollama pull $REFINE_MODEL"; fi
+  fi
+else
+  warn "AI engine didn't start. Dictation still works; the AI cleanup will be off until you run: brew services start ollama"
+fi
+
+# ── 4. speech recognizer ─────────────────────────────────────────────────────
+say "Setting up the speech recognizer…"
+if [ -x "$WHISPER_DIR/build/bin/whisper-cli" ]; then
+  ok "Recognizer already built."
+else
+  [ -d "$WHISPER_DIR/.git" ] || { echo "  Downloading it…"
+    git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$WHISPER_DIR" >/dev/null 2>&1 \
+      || git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$WHISPER_DIR" >/dev/null 2>&1 \
+      || die "Couldn't download the recognizer. Check your internet and try again."; }
+  echo "  Building it (uses your Mac's graphics chip; a couple of minutes)…"
+  cmake -B "$WHISPER_DIR/build" -S "$WHISPER_DIR" -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 || die "Build setup failed."
+  cmake --build "$WHISPER_DIR/build" -j --config Release >/dev/null 2>&1 || die "Build failed."
+  [ -x "$WHISPER_DIR/build/bin/whisper-cli" ] || die "Build finished but something's missing."
+  ok "Recognizer built."
+fi
+if [ -f "$WHISPER_DIR/models/ggml-$WHISPER_MODEL.bin" ]; then
+  ok "Voice model already downloaded."
+else
+  echo "  Downloading the voice model (~1.4 GB, one time)…"
+  ( cd "$WHISPER_DIR" && bash ./models/download-ggml-model.sh "$WHISPER_MODEL" ) >/dev/null 2>&1 \
+    || die "Voice model download failed — paste the line again to retry."
+  [ -f "$WHISPER_DIR/models/ggml-$WHISPER_MODEL.bin" ] || die "Voice model didn't download correctly."
+  ok "Voice model ready."
+fi
+
+# ── 5. the dictation config ──────────────────────────────────────────────────
+say "Installing Local Voice…"
+curl -fsSL "$BASE_URL/payload.tar.gz" -o "$STAGE/payload.tar.gz" || die "Couldn't download the app files."
+tar xzf "$STAGE/payload.tar.gz" -C "$STAGE" || die "The app files didn't unpack correctly."
+mkdir -p "$HS_DIR" "$LW_DIR/bin"
+if [ -f "$HS_DIR/init.lua" ] && ! grep -q "local-whisper" "$HS_DIR/init.lua" 2>/dev/null; then
+  cp "$HS_DIR/init.lua" "$HS_DIR/init.lua.backup-$(date +%Y%m%d-%H%M%S)"
+  warn "Saved your existing Hammerspoon setup to a backup file."
+fi
+cp "$STAGE/hammerspoon/init.lua"                  "$HS_DIR/init.lua"
+cp "$STAGE/hammerspoon/local_whisper_actions.lua" "$HS_DIR/local_whisper_actions.lua"
+cp "$STAGE/hammerspoon/bulletify.lua"             "$HS_DIR/bulletify.lua"
+# turn the AI text-cleanup ON out of the box (so it "just works")
+printf "on" > "$LW_DIR/refine"
+printf "%s" "$REFINE_MODEL" > "$LW_DIR/refine_model"
+ok "Local Voice installed."
+
+# meeting mode helper (optional, Apple-Silicon only)
+if [ "$ARCH" = "arm64" ] && [ -f "$STAGE/bin/aggregate-audio" ]; then
+  cp "$STAGE/bin/aggregate-audio" "$LW_DIR/bin/aggregate-audio"
+  chmod +x "$LW_DIR/bin/aggregate-audio"; xattr -d com.apple.quarantine "$LW_DIR/bin/aggregate-audio" 2>/dev/null || true
+fi
+
+# ── 6. permissions (the only clicks you have to do) ──────────────────────────
+say "One quick permission step (macOS requires this by hand)…"
+cat <<PERM
+  Local Voice needs your OK to type for you and to hear your voice.
+  I'll open two Settings windows. In each one, find ${B}Hammerspoon${RST}
+  in the list and turn its switch ${B}ON${RST}:
+
+     1) Accessibility   →  Hammerspoon  =  ON   (lets it type text)
+     2) Microphone      →  Hammerspoon  =  ON   (lets it hear you)
+
+  If Hammerspoon isn't in the list yet, that's fine — it appears the
+  first time you use it, then flip it on.
+PERM
+if ask "Open those Settings windows now?"; then
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
+  sleep 1
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone" 2>/dev/null || true
+fi
+
+# ── 7. launch ────────────────────────────────────────────────────────────────
+say "Starting Local Voice…"
+open -a Hammerspoon 2>/dev/null || warn "Open Hammerspoon from your Applications folder."
+sleep 2
+command -v hs >/dev/null 2>&1 && hs -c "hs.reload()" >/dev/null 2>&1 || true
+
+# ── 8. plain-English self-test ───────────────────────────────────────────────
+say "Checking everything works…"
+pass=1
+check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else printf "  ${RED}✗${RST} %s\n" "$1"; pass=0; fi; }
+check "Speech recognizer installed"  "[ -x '$WHISPER_DIR/build/bin/whisper-cli' ]"
+check "Voice model downloaded"       "[ -f '$WHISPER_DIR/models/ggml-$WHISPER_MODEL.bin' ]"
+check "Local Voice app installed"    "[ -f '$HS_DIR/init.lua' ]"
+check "Hammerspoon running"          "pgrep -x Hammerspoon"
+check "AI engine responding"         "curl -s -o /dev/null http://localhost:11434/api/tags"
+check "AI model downloaded"          "curl -s http://localhost:11434/api/tags | grep -q '$REFINE_MODEL'"
+
+echo
+if [ "$pass" = "1" ]; then
+cat <<'DONE'
+  ────────────────────────────────────────────────────────────
+   ✓  ALL SET — Local Voice is ready.
+  ────────────────────────────────────────────────────────────
+
+   TRY IT NOW
+     • Click into any text box (a note, an email, a search bar).
+     • Hold down the  Right Command  key and say something.
+     • Let go. Your words appear — tidied up automatically.
+
+   MORE
+     • Rewrite: select text, hold Right ⌘, say "make this shorter"
+       or "fix this" or "make this formal".
+     • Bullet points: select text, press  ⌘ Option 8.
+     • Click the  🎙  icon in the top menu bar for settings.
+
+   If Right ⌘ does nothing at first, finish the two ON switches
+   from the last step, then click 🎙 → Reload Config.
+DONE
+else
+cat <<'DONE'
+  ────────────────────────────────────────────────────────────
+   ⚠  Almost there — one or two items above have an ✗.
+  ────────────────────────────────────────────────────────────
+   The ✗ lines tell you what's missing. Most fixes:
+     • AI items ✗  →  run:  brew services start ollama
+                     then:  ollama pull gemma3:4b
+     • Hammerspoon not running  →  open it from Applications.
+   Then paste the install line again — it skips what's already done.
+DONE
+fi
+echo
