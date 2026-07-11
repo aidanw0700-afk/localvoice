@@ -165,6 +165,10 @@ cp "$STAGE/hammerspoon/bulletify.lua"             "$HS_DIR/bulletify.lua"
 # turn the AI text-cleanup ON out of the box (so it "just works")
 printf "on" > "$LW_DIR/refine"
 printf "%s" "$REFINE_MODEL" > "$LW_DIR/refine_model"
+# ship the tuned cleanup instructions — but never overwrite someone's own edits
+if [ -f "$STAGE/config/refine_prompt" ] && [ ! -f "$LW_DIR/refine_prompt" ]; then
+  cp "$STAGE/config/refine_prompt" "$LW_DIR/refine_prompt"
+fi
 ok "Local Voice installed."
 
 # meeting mode helper (optional, Apple-Silicon only)
